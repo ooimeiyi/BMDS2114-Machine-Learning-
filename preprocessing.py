@@ -24,8 +24,6 @@ from scipy.sparse import csr_matrix, hstack, save_npz
 BASE_DIR = Path(__file__).resolve().parent
 FILE_PATH = BASE_DIR / "traffic_data.csv"
 FINAL_OUTPUT_DIR = BASE_DIR / "processed_data"
-# Build a complete new output tree first. The previous results stay in place
-# unless every preprocessing step finishes successfully.
 OUTPUT_DIR = BASE_DIR / ".processed_data_staging"
 
 CHUNK_SIZE = 100000
@@ -33,40 +31,52 @@ RANDOM_STATE = 42
 TEST_SIZE = 0.20
 MEDIAN_SAMPLE_SIZE = 5000
 
-# Clear only our dedicated staging directory; never start by deleting the
-# currently published results.
-if OUTPUT_DIR.exists():
-    shutil.rmtree(OUTPUT_DIR)
-OUTPUT_DIR.mkdir(parents=True)
-
 TARGET = "accident_severity"
+
+# ============================================================
+# LEAKAGE REMOVAL
+# ============================================================
+
+# Removed because they are generated using accident severity
+# or depend on the accident outcome.
+
+REMOVED_LEAKAGE_FEATURES = [
+    "speed_kmh",
+    "acceleration_ms2",
+    "visibility_km",
+    "traffic_density",
+    "reaction_time_sec",
+    "driver_experience_level",
+    "alcohol_influence",
+    "seatbelt_worn",
+    "junction_type"
+]
+
+# ============================================================
+# NUMERICAL FEATURES - KEEP
+# ============================================================
 
 NUMERICAL = [
     "latitude",
     "longitude",
-    "speed_kmh",
-    "acceleration_ms2",
-    "visibility_km",
     "temperature_celsius",
-    "traffic_density",
     "vehicle_age_years",
     "driver_age",
-    "reaction_time_sec",
     "speed_limit_zone",
     "month"
 ]
 
+# ============================================================
+# CATEGORICAL FEATURES - KEEP
+# ============================================================
+
 CATEGORICAL = [
     "weather_condition",
     "road_surface",
-    "junction_type",
     "light_condition",
     "time_of_day",
     "vehicle_type",
-    "driver_experience_level",
     "road_quality",
-    "alcohol_influence",
-    "seatbelt_worn",
     "road_class"
 ]
 
@@ -79,6 +89,12 @@ VALID_LABELS = [
 ]
 
 MISSING_CATEGORY = "__MISSING__"
+
+print("Leakage features removed:", len(REMOVED_LEAKAGE_FEATURES))
+print("Remaining numerical features:", len(NUMERICAL))
+print("Remaining categorical features:", len(CATEGORICAL))
+print("Total remaining features:", len(FEATURES))
+print("Target:", TARGET)
 
 
 # ============================================================
