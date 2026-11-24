@@ -6,12 +6,14 @@ Run (from this folder, after preprocessing_full.py and the model scripts have ru
 
 Sidebar : model selection (Random Forest / XGBoost)
 Tab 1   : Prediction  - enter the 14 input features, press Predict, see the predicted severity
+          and an animation (crash for Major, safe driving otherwise) of the selected vehicle type
 Tab 2   : Model comparison - accuracy, precision, recall, F1 of the models (overall, per class, per stage)
 Tab 3   : EDA - exploratory charts of the raw data (built from a random sample of the CSV)
 Tab 4   : Major scenarios - auto-generated inputs the model predicts as Major
 Tab 5   : Feature signal - which features move the Major prediction
 """
 import calendar
+import math
 from pathlib import Path
 
 import altair as alt
@@ -19,6 +21,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 # Importing this module is also needed to load preprocessor.joblib (it holds the Preprocessor class).
 from preprocessing import CSV_PATH, FEATURES, NOMINAL, ORDINAL, TARGET, TARGET_MAP, TARGET_NAMES
@@ -210,6 +213,173 @@ def sensitivity(model, pre, row):
     proba, classes = predict_major(model, pre, pd.DataFrame([r for _, _, r in variants]))
     return pd.DataFrame({"Feature": [c for c, _, _ in variants], "Value": [str(v) for _, v, _ in variants],
                          "Major probability": proba[:, classes.index(MAJOR)]})
+
+
+# ---- result animation (inline SVG + CSS, shown in an iframe) ------------------
+VEHICLE_COLORS = {            # body colour, accent colour for the vehicle in the input
+    "Car": ("#2f80ed", "#1b4f9c"), "Truck": ("#e67e22", "#a04f0b"),
+    "Motorcycle": ("#c0392b", "#7b241c"), "Bus": ("#f1c40f", "#b7950b"),
+    "Van": ("#16a085", "#0b5345"),
+}
+OTHER_COLORS = ("#c0392b", "#7b241c")   # colour of the second vehicle in a crash
+GLASS = "#d6ecff"
+
+
+def _wheel(cx, cy, r):
+    return (f'<g transform="translate({cx},{cy})"><g class="wheel"><circle r="{r}" fill="#222"/>'
+            f'<circle r="{r * 0.58:.1f}" fill="#cfd3d7"/>'
+            f'<line x1="{-r * 0.5:.1f}" y1="0" x2="{r * 0.5:.1f}" y2="0" stroke="#7d8389" stroke-width="2"/>'
+            f'<line x1="0" y1="{-r * 0.5:.1f}" x2="0" y2="{r * 0.5:.1f}" stroke="#7d8389" stroke-width="2"/>'
+            f'<circle r="2.5" fill="#222"/></g></g>')
+
+
+def vehicle_svg(kind, colors):
+    """A vehicle of the given type facing right (viewBox 200 x 100, wheels touch y = 88)."""
+    body, accent = colors
+    lamp = '<circle cx="{x}" cy="{y}" r="3.2" fill="#ffd54a"/>'
+    if kind == "Truck":
+        parts = (f'<rect x="6" y="74" width="184" height="5" fill="#444"/>'
+                 f'<rect x="6" y="14" width="112" height="60" rx="3" fill="#f4f4f4" stroke="#b8b8b8" stroke-width="1.5"/>'
+                 f'<rect x="6" y="50" width="112" height="7" fill="{accent}"/>'
+                 f'<path d="M122 76 V38 Q122 33 128 33 H158 L184 56 Q190 59 190 65 V76 Z" fill="{body}"/>'
+                 f'<polygon points="130,39 156,39 174,56 130,56" fill="{GLASS}"/>'
+                 + lamp.format(x=186, y=66)
+                 + _wheel(32, 77, 11) + _wheel(80, 77, 11) + _wheel(158, 77, 11))
+    elif kind == "Motorcycle":
+        parts = (f'<line x1="46" y1="72" x2="92" y2="64" stroke="#444" stroke-width="5" stroke-linecap="round"/>'
+                 f'<rect x="84" y="56" width="30" height="20" rx="3" fill="#555"/>'
+                 f'<line x1="62" y1="76" x2="104" y2="76" stroke="#aaa" stroke-width="5" stroke-linecap="round"/>'
+                 f'<line x1="134" y1="48" x2="156" y2="72" stroke="#888" stroke-width="5" stroke-linecap="round"/>'
+                 f'<path d="M96 46 Q116 34 136 46 L138 58 H100 Z" fill="{body}"/>'
+                 f'<path d="M60 50 Q80 42 98 48 L96 56 H60 Z" fill="#222"/>'
+                 f'<line x1="130" y1="40" x2="144" y2="38" stroke="#333" stroke-width="5" stroke-linecap="round"/>'
+                 f'<circle cx="147" cy="46" r="5" fill="#ffd54a"/>'
+                 f'<line x1="84" y1="46" x2="104" y2="68" stroke="#2c3e50" stroke-width="7" stroke-linecap="round"/>'
+                 f'<path d="M80 46 L88 22 Q94 17 100 22 L108 44 Z" fill="#2c3e50"/>'
+                 f'<line x1="102" y1="28" x2="134" y2="40" stroke="#2c3e50" stroke-width="5" stroke-linecap="round"/>'
+                 f'<circle cx="96" cy="12" r="9" fill="{accent}"/><rect x="96" y="10" width="9" height="5" rx="2" fill="{GLASS}"/>'
+                 + _wheel(46, 72, 16) + _wheel(156, 72, 16))
+    elif kind == "Bus":
+        wins = "".join(f'<rect x="{x}" y="22" width="22" height="20" rx="2" fill="{GLASS}"/>' for x in (12, 38, 64, 90))
+        parts = (f'<rect x="4" y="14" width="188" height="62" rx="8" fill="{body}"/>' + wins
+                 + f'<rect x="118" y="22" width="22" height="54" rx="2" fill="#bfe0f5" stroke="{accent}" stroke-width="1.5"/>'
+                 f'<line x1="129" y1="22" x2="129" y2="76" stroke="{accent}" stroke-width="1.5"/>'
+                 f'<path d="M150 22 H180 Q187 22 187 30 V46 H150 Z" fill="{GLASS}"/>'
+                 f'<rect x="4" y="54" width="188" height="6" fill="{accent}"/>'
+                 + lamp.format(x=188, y=66) + _wheel(46, 77, 11) + _wheel(146, 77, 11))
+    elif kind == "Van":
+        parts = (f'<path d="M8 76 V30 Q8 24 14 24 H126 Q132 24 136 28 L168 50 H186 Q194 50 194 58 V76 Z" fill="{body}"/>'
+                 f'<polygon points="132,32 138,32 160,48 132,48" fill="{GLASS}"/>'
+                 f'<rect x="100" y="34" width="26" height="14" rx="2" fill="{GLASS}"/>'
+                 f'<line x1="96" y1="26" x2="96" y2="74" stroke="{accent}" stroke-width="2"/>'
+                 f'<rect x="8" y="56" width="186" height="5" fill="{accent}"/>'
+                 f'<rect x="8" y="48" width="4" height="8" fill="#e74c3c"/>'
+                 + lamp.format(x=190, y=60) + _wheel(46, 77, 11) + _wheel(150, 77, 11))
+    else:   # Car
+        parts = (f'<path d="M10 76 V56 Q10 52 16 51 L48 48 L64 28 H118 L146 49 L184 54 Q192 56 192 63 V76 Z" fill="{body}"/>'
+                 f'<polygon points="58,46 68,32 88,32 88,46" fill="{GLASS}"/>'
+                 f'<polygon points="94,32 116,32 138,46 94,46" fill="{GLASS}"/>'
+                 f'<line x1="91" y1="32" x2="91" y2="74" stroke="{accent}" stroke-width="2"/>'
+                 f'<rect x="10" y="58" width="5" height="7" fill="#e74c3c"/>'
+                 + lamp.format(x=187, y=62) + _wheel(52, 76, 12) + _wheel(150, 76, 12))
+    return f'<svg viewBox="0 0 200 100" width="170" height="85">{parts}</svg>'
+
+
+def _boom_svg():
+    def star(cx, cy, outer, inner, n=14):
+        pts = []
+        for i in range(2 * n):
+            r, a = (outer if i % 2 == 0 else inner), math.pi * i / n
+            pts.append(f"{cx + r * math.sin(a):.1f},{cy - r * math.cos(a):.1f}")
+        return " ".join(pts)
+    return ('<svg viewBox="0 0 190 190" width="190" height="190">'
+            f'<polygon points="{star(95, 95, 92, 52)}" fill="#e74c3c"/>'
+            f'<polygon points="{star(95, 95, 68, 40, 12)}" fill="#ffb300"/>'
+            f'<polygon points="{star(95, 95, 44, 28, 10)}" fill="#fff59d"/>'
+            '<text x="95" y="106" text-anchor="middle" font-family="Impact, Arial Black, sans-serif" font-size="34" '
+            'font-weight="900" fill="#fff" stroke="#b71c1c" stroke-width="5" paint-order="stroke">BOOM!</text></svg>')
+
+
+_STYLE = """
+html,body{margin:0;background:transparent;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+.scene{position:relative;width:640px;max-width:100%;height:230px;margin:0 auto;overflow:hidden;border-radius:14px;
+  background:linear-gradient(#8ccbff,#e8f5ff 66%)}
+.stage{position:absolute;inset:0}
+.road{position:absolute;left:0;right:0;bottom:0;height:84px;background:#4a4f57}
+.road::before{content:"";position:absolute;left:0;right:0;top:0;height:4px;background:#2f3338}
+.lane{position:absolute;left:0;right:0;bottom:36px;height:5px;
+  background:repeating-linear-gradient(90deg,#f5f5f5 0 34px,transparent 34px 68px)}
+.veh{position:absolute;bottom:74px;width:170px;height:85px}
+.veh svg{display:block}
+.flip svg{transform:scaleX(-1)}
+.wheel{transform-box:fill-box;transform-origin:center;animation:spin .45s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tag{position:absolute;left:10px;top:8px;font-size:13px;font-weight:600;color:#33475b;background:rgba(255,255,255,.75);
+  padding:2px 10px;border-radius:12px;z-index:5}
+.note{position:absolute;right:10px;top:8px;font-size:13px;font-weight:700;padding:2px 10px;border-radius:12px;z-index:5}
+"""
+
+_CRASH_CSS = """
+.vehA{left:-180px;animation:vehA 5s linear infinite}
+.vehB{left:650px;animation:vehB 5s linear infinite}
+@keyframes vehA{0%{left:-180px;opacity:0;transform:rotate(0)}3%{opacity:1}38%{left:160px;transform:rotate(0)}
+ 41%{left:148px;transform:rotate(-4deg)}48%{left:96px;transform:rotate(-10deg)}55%{left:104px;transform:rotate(-7deg)}
+ 90%{left:104px;opacity:1;transform:rotate(-7deg)}100%{left:104px;opacity:0;transform:rotate(-7deg)}}
+@keyframes vehB{0%{left:650px;opacity:0;transform:rotate(0)}3%{opacity:1}38%{left:310px;transform:rotate(0)}
+ 41%{left:322px;transform:rotate(4deg)}48%{left:374px;transform:rotate(10deg)}55%{left:366px;transform:rotate(7deg)}
+ 90%{left:366px;opacity:1;transform:rotate(7deg)}100%{left:366px;opacity:0;transform:rotate(7deg)}}
+.boom{position:absolute;left:320px;top:100px;width:0;height:0;z-index:4}
+.boom svg{position:absolute;left:-95px;top:-95px;opacity:0;animation:boom 5s linear infinite}
+@keyframes boom{0%,38%{opacity:0;transform:scale(.1) rotate(0)}41%{opacity:1;transform:scale(1.25) rotate(8deg)}
+ 48%{opacity:1;transform:scale(1) rotate(-4deg)}75%{opacity:1;transform:scale(1.06) rotate(2deg)}
+ 88%{opacity:0;transform:scale(1.12)}100%{opacity:0}}
+.flash{position:absolute;inset:0;background:#fff;opacity:0;z-index:6;animation:flash 5s linear infinite}
+@keyframes flash{0%,38%{opacity:0}40%{opacity:.85}47%{opacity:0}100%{opacity:0}}
+.stage{animation:shake 5s linear infinite}
+@keyframes shake{0%,39%{transform:none}41%{transform:translate(-7px,3px)}43%{transform:translate(7px,-3px)}
+ 45%{transform:translate(-4px,2px)}47%{transform:translate(3px,-2px)}49%,100%{transform:none}}
+.puff{position:absolute;top:118px;width:46px;height:46px;border-radius:50%;background:rgba(80,80,80,.6);opacity:0;
+  z-index:3;animation:puff 5s linear infinite}
+@keyframes puff{0%,40%{opacity:0;transform:translateY(0) scale(.3)}47%{opacity:.75}
+ 85%{opacity:0;transform:translateY(var(--dy)) scale(1.8)}100%{opacity:0}}
+.note{color:#fff;background:#d64545}
+"""
+
+_SAFE_CSS = """
+.lane{animation:lane .6s linear infinite}
+@keyframes lane{to{background-position:-68px 0}}
+.vehS{left:235px;animation:bob .35s ease-in-out infinite alternate}
+@keyframes bob{from{transform:translateY(0)}to{transform:translateY(-2px)}}
+.deco{position:absolute;line-height:1;animation:deco linear infinite}
+@keyframes deco{from{left:670px}to{left:-80px}}
+.note{color:#fff;background:#2e9e5b}
+"""
+
+
+def animation_html(kind, major):
+    """Self-contained HTML: two vehicles crash (Major) or one vehicle drives safely (otherwise)."""
+    kind = kind if kind in VEHICLE_COLORS else "Car"
+    mine = vehicle_svg(kind, VEHICLE_COLORS[kind])
+    if major:
+        other = vehicle_svg(kind, OTHER_COLORS)
+        puffs = "".join(f'<div class="puff" style="left:{x}px;--dy:{dy}px"></div>'
+                        for x, dy in ((292, -70), (328, -92), (362, -60)))
+        body = (f'<div class="flash"></div><div class="stage"><div class="road"><div class="lane"></div></div>'
+                f'<div class="veh vehA">{mine}</div><div class="veh vehB flip">{other}</div>{puffs}'
+                f'<div class="boom">{_boom_svg()}</div></div>'
+                f'<div class="tag">{kind}</div><div class="note">Major accident</div>')
+        css = _STYLE + _CRASH_CSS
+    else:
+        scenery = "".join(
+            f'<div class="deco" style="bottom:{b}px;font-size:{s}px;animation-duration:{d}s;animation-delay:-{dl}s">{e}</div>'
+            for e, b, s, d, dl in (("🌳", 84, 54, 5, 0), ("🌳", 84, 44, 5, 2.4), ("🪧", 84, 30, 5, 4),
+                                    ("☁️", 140, 46, 17, 3), ("☁️", 168, 38, 23, 11), ("☁️", 118, 34, 29, 20)))
+        body = (f'<div class="stage"><div class="deco" style="top:6px;left:auto;right:150px;font-size:34px;'
+                f'animation:none">☀️</div>{scenery}<div class="road"><div class="lane"></div></div>'
+                f'<div class="veh vehS">{mine}</div></div>'
+                f'<div class="tag">{kind}</div><div class="note">Safe journey ✔</div>')
+        css = _STYLE + _SAFE_CSS
+    return f"<style>{css}</style><div class='scene'>{body}</div>"
 
 
 # ---- EDA helpers (all charts are fixed: no zoom or pan) ----------------------
@@ -407,6 +577,9 @@ with tab_predict:
                 col.metric(TARGET_NAMES[c], f"{p:.1%}")
             st.altair_chart(probability_chart(pd.DataFrame({
                 "Class": [TARGET_NAMES[c] for c in classes], "Probability": proba})))
+            # Animation: two vehicles crash for Major, one vehicle drives safely otherwise.
+            # The vehicle type follows the input that was used for this prediction.
+            components.html(animation_html(res["row"]["vehicle_type"], label == "Major"), height=250)
             with st.expander("Encoded model input"):
                 st.dataframe(res["X"])
 
