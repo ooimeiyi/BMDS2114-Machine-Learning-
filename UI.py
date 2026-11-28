@@ -547,8 +547,9 @@ with tab_predict:
     if pre is None:
         st.error(f"Preprocessor not found: `{PRE_PATH}`. Run preprocessing_full.py first.")
     elif model is None:
+        train_command = "python XGB.py" if model_name == "XGBoost" else "python RandomForest.py"
         st.warning(f"{model_name} model not found: `{MODELS[model_name]['model']}`. "
-                   "Train and save it first, or pick another model in the sidebar.")
+                   f"Run `{train_command}` after preprocessing.py, or pick another model in the sidebar.")
     else:
         if st.button("Predict", type="primary"):
             X = pre.transform_raw(pd.DataFrame([row]))
